@@ -81,79 +81,190 @@ class Groot {
         }
     }
 
-    async log(){
+    async log() {
         let currentCommitHash = await this.getCurrentHead();
-
-        while(currentCommitHash){
-            const commitData = JSON.parse(await fs.readFile(path.join(this.objectsPath, currentCommitHash), {encoding : 'utf-8'}))
-            console.log(`Commit: ${currentCommitHash}\nDate:${commitData.timeStamp} \n\n${commitData.message }`)
-
-            currentCommitHash = commitData.parent
+    
+        if (!currentCommitHash) {
+            console.log("No commits yet.");
+            return;
+        }
+    
+        while (currentCommitHash) {
+            const commitData = JSON.parse(
+                await fs.readFile(
+                    path.join(this.objectsPath, currentCommitHash),
+                    { encoding: 'utf-8' }
+                )
+            );
+    
+            console.log(
+                chalk.yellow(`commit ${currentCommitHash}`)
+            );
+    
+            console.log(
+                chalk.gray(
+                    `Date: ${new Date(commitData.timeStamp).toLocaleString()}`
+                )
+            );
+    
+            console.log();
+    
+            console.log(
+                `    ${commitData.message}`
+            );
+    
+            console.log();
+    
+            currentCommitHash = commitData.parent;
         }
     }
 
-    async showCommitDiff(commitHash){
-
-        const commitData = JSON.parse(await this.getCommitData(commitHash));
-
-        if(!commitData){
+    async showCommitDiff(commitHash) {
+        const commitData = JSON.parse(
+            await this.getCommitData(commitHash)
+        );
+    
+        if (!commitData) {
             console.log("Commit not found");
             return;
         }
-
-        for(const file of commitData.index){
+    
+        console.log(
+            chalk.yellow(`commit ${commitHash}`)
+        );
+    
+        console.log(
+            chalk.gray(`Date: ${new Date(commitData.timeStamp).toLocaleString()}`)
+        );
+    
+        console.log();
+    
+        console.log(
+            `    ${commitData.message}`
+        );
+    
+        console.log();
+    
+        // First commit
+        if (!commitData.parent) {
+            console.log(chalk.gray("No parent commit — showing all files as added."));
+            
+            for (const file of commitData.index) {
+                const fileContent = await this.getFileContent(file.hash);
+    
+                console.log(
+                    chalk.cyan(`diff --groot a/${file.file} b/${file.file}`)
+                );
+    
+                console.log(
+                    chalk.green(`new file: ${file.file}`)
+                );
+    
+                console.log();
+    
+                const lines = fileContent.split('\n');
+    
+                for (const line of lines) {
+                    if (line !== '') {
+                        console.log(chalk.green(`+${line}`));
+                    }
+                }
+    
+                console.log();
+            }
+    
+            return;
+        }
+    
+        const parentCommitData = JSON.parse(
+            await this.getCommitData(commitData.parent)
+        );
+    
+        for (const file of commitData.index) {
             const fileContent = await this.getFileContent(file.hash);
-
-            if(commitData.parent){
-                const parentCommitData = JSON.parse(await this.getCommitData(commitData.parent));
-                const parentFileContent = await this.getParentFileContent(file.path, parentCommitData);
-
-                if(parentFileContent != undefined){
-                    console.log("\n Diff: ")
-                    const diff = diffLines(parentFileContent, fileContent);
-                    
-                    diff.forEach(part => {
-                        if(part.added){
-                            process.stdout.write(chalk.green("++ " +part.value));
-                        }
-                        else if(part.removed){
-                            process.stdout.write(chalk.red("-- " + part.value));
-                        }
-                        else{
-                            process.stdout.write(chalk.gray(part.value));
-                        }
-                    })
-
-                    console.log()
+    
+            const parentFileContent = await this.getParentFileContent(
+                file.file,
+                parentCommitData
+            );
+    
+            console.log(
+                chalk.cyan(
+                    `diff --groot a/${file.file} b/${file.file}`
+                )
+            );
+    
+            if (parentFileContent === undefined) {
+                console.log(
+                    chalk.green(`new file: ${file.file}`)
+                );
+    
+                console.log();
+    
+                const lines = fileContent.split('\n');
+    
+                for (const line of lines) {
+                    if (line !== '') {
+                        console.log(chalk.green(`+${line}`));
+                    }
                 }
-                else{
-                    console.log("New file in this commit")
-                }
+    
+                console.log();
+                continue;
             }
-            else{
-                console.log("First commit");
-            }
+    
+            const diff = diffLines(
+                parentFileContent,
+                fileContent
+            );
+    
+            diff.forEach(part => {
+                const lines = part.value.split('\n');
+    
+                lines.forEach(line => {
+                    if (line === '') return;
+    
+                    if (part.added) {
+                        console.log(
+                            chalk.green(`+${line}`)
+                        );
+                    } 
+                    else if (part.removed) {
+                        console.log(
+                            chalk.red(`-${line}`)
+                        );
+                    } 
+                    else {
+                        console.log(
+                            chalk.gray(` ${line}`)
+                        );
+                    }
+                });
+            });
+    
+            console.log();
         }
     }
 
     async getParentFileContent(filePath, parentCommitData){
-        const parentFile = parentCommitData.index.find(file => file.path === filePath);
+        const parentFile = parentCommitData.index.find(file => file.file === filePath);
 
         if(parentFile){
             return await this.getFileContent(parentFile.hash);
         }
 
+        return undefined;
     }
 
     async getFileContent(fileHash){
         const filePath = path.join(this.objectsPath, fileHash);
-        return fs.readFile(filePath, {encoding : 'utf-8'});       
+        return await fs.readFile(filePath, {encoding : 'utf-8'});       
     }
 
     async getCommitData(commitHash){
         const commitPath = path.join(this.objectsPath, commitHash);
         try {
-            const data = fs.readFile(commitPath, {encoding : 'utf-8'});
+            const data = await fs.readFile(commitPath, {encoding : 'utf-8'});
             return data;
         } catch (error) {
             console.log(error);
@@ -165,7 +276,8 @@ class Groot {
 (async() => {
     const groot = new Groot();
     // await groot.add('sample.txt');
+    // await groot.add('new.txt');
     // await groot.commit('fifth commit');
     await groot.log();
-    await groot.showCommitDiff("353134600411d32f890f5ab426b324872dd87f7457489ef357738323dc07796f");
+    await groot.showCommitDiff("f87db82bf8b6f52e63296e3b70a46d94768c4a19b1921ecf99482d40ee3ffbce");
 })();
